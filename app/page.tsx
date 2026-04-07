@@ -9,70 +9,97 @@ import {
   Tooltip,
   CartesianGrid,
   ResponsiveContainer,
+  Legend,
 } from "recharts";
 
-export default function Simulator() {
+type Row = {
+  year: number;
+  Hold: number;
+  LP: number;
+};
+
+export default function Page() {
   const [btcPrice, setBtcPrice] = useState(0);
-  const [data, setData] = useState<any[]>([]);
 
-  const btcAmount = 3;
-  const years = 3;
-  const apy = 0.12;
-
-  async function fetchPrice() {
-    try {
-      const res = await fetch(
-        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-      );
-      const json = await res.json();
-      setBtcPrice(json.bitcoin.usd);
-    } catch (err) {
-      console.error("Error fetching BTC price:", err);
-    }
-  }
+  const initialBTC = 3;
+  const years = [0, 1, 2, 3];
+  const assumedAPY = 0.12; // 12% LP fee/yield assumption
 
   useEffect(() => {
+    async function fetchPrice() {
+      try {
+        const res = await fetch(
+          "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+        );
+        const data = await res.json();
+        setBtcPrice(data.bitcoin.usd);
+      } catch (error) {
+        console.error("Failed to fetch BTC price:", error);
+      }
+    }
+
     fetchPrice();
     const interval = setInterval(fetchPrice, 10000);
     return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    if (!btcPrice) return;
+  function simulate(): Row[] {
+    if (!btcPrice) return [];
 
-    const arr = [];
+    return years.map((year) => {
+      const priceRatio = 1 + year * 0.25; // example: BTC rises 25% per year
+      const holdValue = initialBTC * btcPrice * priceRatio;
 
-    for (let i = 0; i <= years; i++) {
-      const growth = Math.pow(1 + apy, i);
-      const poolValue = btcAmount * btcPrice * growth;
-      const holdValue = btcAmount * btcPrice * (1 + i * 0.25);
+      // Impermanent loss formula for a 50/50 LP
+      const il = (2 * Math.sqrt(priceRatio)) / (1 + priceRatio) - 1;
 
-      arr.push({
-        year: i,
-        pool: poolValue,
-        hold: holdValue,
-      });
-    }
+      const startingValue = initialBTC * btcPrice;
+      const lpWithFees = startingValue * Math.pow(1 + assumedAPY, year);
+      const lpFinal = lpWithFees * (1 + il);
 
-    setData(arr);
-  }, [btcPrice]);
+      return {
+        year,
+        Hold: Math.round(holdValue),
+        LP: Math.round(lpFinal),
+      };
+    });
+  }
+
+  const data = simulate();
 
   return (
-    <div style={{ padding: 40 }}>
-      <h1>BTC Liquidity Pool Simulator (3 BTC)</h1>
-      <h2>Live BTC Price: ${btcPrice}</h2>
+    <div style={{ padding: 20, fontFamily: "Arial, sans-serif" }}>
+      <h1>BTC LP Simulator (Uniswap-style 50/50 model)</h1>
+      <p style={{ fontSize: 20, fontWeight: 700 }}>
+        Live BTC Price: ${btcPrice || 0}
+      </p>
 
-      <div style={{ marginTop: 30, width: "100%", height: 400 }}>
+      <div style={{ width: "100%", height: 420, marginTop: 20 }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="year" />
             <YAxis />
             <Tooltip />
-            <Line type="monotone" dataKey="pool" stroke="#8884d8" />
-            <Line type="monotone" dataKey="hold" stroke="#82ca9d" />
+            <Legend />
+            <Line type="monotone" dataKey="Hold" stroke="#8884d8" />
+            <Line type="monotone" dataKey="LP" stroke="#82ca9d" />
           </LineChart>
         </ResponsiveContainer>
+      </div>
+
+      <div style={{ marginTop: 24, lineHeight: 1.7 }}>
+        <strong>Model assumptions:</strong>
+        <br />
+        • Starting position: 3 BTC
+        <br />
+        • LP type: 50/50 BTC-stable style pool
+        <br />
+        • LP yield assumption: 12% annually
+        <br />
+        • Includes impermanent loss
+        <br />
+        • BTC growth assumption in this example: 25% per year
       </div>
     </div>
   );
