@@ -217,12 +217,46 @@ export default function Page() {
   }, [liveRows]);
 
   useEffect(() => {
-    const next: HistoryRow = {
-      tick: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-      btcPrice: btcPrice || 68000,
-      poolUsd,
-      stakedBtc: BTC_POOL_TOTAL,
-    };
+  let lastGoodPrice = 68000;
+
+  async function fetchPrice() {
+    try {
+      const res = await fetch(LIVE_PRICE_URL);
+
+      if (!res.ok) throw new Error("Bad response");
+
+      const json = await res.json();
+
+      const price = Number(json?.bitcoin?.usd);
+      const change = Number(json?.bitcoin?.usd_24h_change);
+
+      if (!price || isNaN(price)) throw new Error("Invalid price");
+
+      setBtcPrice(price);
+      setBtcChange24h(change || 0);
+      lastGoodPrice = price;
+      setError("");
+    } catch (e) {
+      console.warn("Price fetch failed, using fallback");
+      setBtcPrice(lastGoodPrice);
+      setError("Using fallback BTC price (API temporarily unavailable)");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  fetchPrice();
+
+  const interval = setInterval(fetchPrice, 30000);
+  const pulseInterval = setInterval(() => {
+    setPulse((p) => p + 1);
+  }, 1200);
+
+  return () => {
+    clearInterval(interval);
+    clearInterval(pulseInterval);
+  };
+}, []);
 
     setHistory((prev) => [...prev.slice(-29), next]);
   }, [pulse, btcPrice, poolUsd]);
