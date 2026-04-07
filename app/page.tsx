@@ -223,23 +223,26 @@ export default function Page() {
     try {
       const res = await fetch(LIVE_PRICE_URL);
 
-      if (!res.ok) throw new Error("Bad response");
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
 
       const json = await res.json();
 
       const price = Number(json?.bitcoin?.usd);
       const change = Number(json?.bitcoin?.usd_24h_change);
 
-      if (!price || isNaN(price)) throw new Error("Invalid price");
+      if (!price || Number.isNaN(price)) {
+        throw new Error("Invalid BTC price");
+      }
 
-      setBtcPrice(price);
-      setBtcChange24h(change || 0);
       lastGoodPrice = price;
+      setBtcPrice(price);
+      setBtcChange24h(Number.isNaN(change) ? 0 : change);
       setError("");
     } catch (e) {
-      console.warn("Price fetch failed, using fallback");
       setBtcPrice(lastGoodPrice);
-      setError("Using fallback BTC price (API temporarily unavailable)");
+      setError("Using fallback BTC price. Live API temporarily unavailable.");
     } finally {
       setLoading(false);
     }
@@ -247,10 +250,14 @@ export default function Page() {
 
   fetchPrice();
 
-  const interval = setInterval(fetchPrice, 30000);
-  const pulseInterval = setInterval(() => {
-    setPulse((p) => p + 1);
-  }, 1200);
+  const priceInterval = setInterval(fetchPrice, 30000);
+  const pulseInterval = setInterval(() => setPulse((p) => p + 1), 1200);
+
+  return () => {
+    clearInterval(priceInterval);
+    clearInterval(pulseInterval);
+  };
+}, []);
 
   return () => {
     clearInterval(interval);
