@@ -24,7 +24,7 @@ const ADDRESS_COUNT = 500;
 const PINNED_WHALE_BTC = 1.5;
 const PINNED_COUNT = 2;
 const LOCK_YEARS = 5;
-const APR = 0.05; // simple annual rate, paid daily, no compounding
+const APR = 0.05;
 const LIVE_PRICE_URL =
   "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true";
 
@@ -42,9 +42,11 @@ const COLORS = [
 ];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const LOCK_START_DATE = new Date("2025-01-01T00:00:00Z");
-const LOCK_END_DATE = new Date("2030-01-01T00:00:00Z");
-const TOTAL_LOCK_DAYS = Math.round((LOCK_END_DATE.getTime() - LOCK_START_DATE.getTime()) / DAY_MS);
+const LOCK_START_DATE = new Date("2026-04-01T00:00:00Z");
+const LOCK_END_DATE = new Date("2031-04-01T00:00:00Z");
+const TOTAL_LOCK_DAYS = Math.round(
+  (LOCK_END_DATE.getTime() - LOCK_START_DATE.getTime()) / DAY_MS
+);
 
 function usd(n: number) {
   return new Intl.NumberFormat("en-US", {
@@ -86,10 +88,12 @@ type AllocationSeed = {
   id: string;
   btc: number;
   isPinned: boolean;
+  ownerName: string;
 };
 
 type AddressRow = {
   id: string;
+  ownerName: string;
   baseBtc: number;
   currentBtc: number;
   currentUsd: number;
@@ -142,12 +146,13 @@ function generateAllocations(total: number, count: number): AllocationSeed[] {
   const variableAllocations = weights.map((w) => (w / weightSum) * remaining);
 
   const rows: AllocationSeed[] = [
-    { id: makeHexAddress(1), btc: PINNED_WHALE_BTC, isPinned: true },
-    { id: makeHexAddress(2), btc: PINNED_WHALE_BTC, isPinned: true },
+    { id: makeHexAddress(1), btc: PINNED_WHALE_BTC, isPinned: true, ownerName: "Andrew" },
+    { id: makeHexAddress(2), btc: PINNED_WHALE_BTC, isPinned: true, ownerName: "Ksenia" },
     ...variableAllocations.map((amt, idx) => ({
       id: makeHexAddress(idx + 3),
       btc: amt,
       isPinned: false,
+      ownerName: "",
     })),
   ];
 
@@ -226,6 +231,7 @@ export default function Page() {
 
       return {
         id: row.id,
+        ownerName: row.ownerName,
         baseBtc: row.btc,
         currentBtc,
         currentUsd: currentBtc * basePrice,
@@ -259,7 +265,7 @@ export default function Page() {
 
   const pieData = useMemo(() => {
     const top5 = liveRows.slice(0, 5).map((r, i) => ({
-      name: r.isPinned ? `Pinned ${i + 1}` : `Addr ${i + 1}`,
+      name: r.isPinned ? r.ownerName : `Addr ${i + 1}`,
       value: r.currentBtc,
     }));
     const rest = BTC_POOL_TOTAL - top5.reduce((s, x) => s + x.value, 0);
@@ -347,9 +353,9 @@ export default function Page() {
           <div style={panelStyle}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
               <div>
-                <div style={{ color: "#94a3b8", fontSize: 13 }}>Pinned wallet details</div>
-                <h1 style={{ margin: "8px 0 6px", fontSize: 34 }}>{shortAddress(selectedWalletDetails.id)}</h1>
-                <div style={{ color: "#cbd5e1" }}>Wallet remains locked until {dateFmt(LOCK_END_DATE)}</div>
+                <div style={{ color: "#94a3b8", fontSize: 13 }}>Partridge Wealth SMSF — separate member balance</div>
+                <h1 style={{ margin: "8px 0 6px", fontSize: 34 }}>{selectedWalletDetails.ownerName}</h1>
+                <div style={{ color: "#cbd5e1" }}>{shortAddress(selectedWalletDetails.id)} · Locked until {dateFmt(LOCK_END_DATE)}</div>
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ color: "#94a3b8", fontSize: 13 }}>Current locked balance</div>
@@ -388,7 +394,7 @@ export default function Page() {
                   lineHeight: 1.6,
                 }}
               >
-                Withdrawal is disabled. This wallet is in lock-up until {dateFmt(LOCK_END_DATE)}. Rewards are credited daily but cannot be withdrawn before maturity.
+                Withdrawal is disabled. This member balance is in lock-up until {dateFmt(LOCK_END_DATE)}. Rewards are credited daily but cannot be withdrawn before maturity.
               </div>
 
               <label style={{ display: "block", color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>
@@ -469,10 +475,10 @@ export default function Page() {
               <span style={{ fontSize: 13, fontWeight: 700 }}>LIVE STAKING PANEL</span>
             </div>
             <h1 style={{ margin: "14px 0 8px", fontSize: 42, lineHeight: 1.05 }}>
-              BTC Pool Dashboard — 289 BTC Locked
+              BTC Fixed Yield Pool — 5Y Lock
             </h1>
-            <div style={{ color: "#94a3b8", fontSize: 16, maxWidth: 920 }}>
-              500 addresses, 2 pinned wallets at exactly 1.5 BTC each, live BTC price feed, 5-year lockup and 5% annual rewards paid daily without compounding.
+            <div style={{ color: "#facc15", fontSize: 16, maxWidth: 920, fontWeight: 800 }}>
+              Subscription closed
             </div>
           </div>
 
@@ -622,6 +628,9 @@ export default function Page() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 18 }}>
           <div style={panelStyle}>
             <div style={panelTitle}>Pinned Wallets</div>
+            <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 12 }}>
+              Partridge Wealth SMSF — separate member balances
+            </div>
             <div style={{ display: "grid", gap: 12, marginTop: 14 }}>
               {pinned.map((row, idx) => {
                 const maturityBalanceBtc = row.baseBtc + row.maturityRewardBtc;
@@ -641,8 +650,8 @@ export default function Page() {
                       color: "#e2e8f0",
                     }}
                   >
-                    <div style={{ fontSize: 13, color: "#cbd5e1" }}>Pinned address #{idx + 1}</div>
-                    <div style={{ fontSize: 16, fontWeight: 700, marginTop: 6 }}>{shortAddress(row.id)}</div>
+                    <div style={{ fontSize: 13, color: "#cbd5e1" }}>Member: {row.ownerName}</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, marginTop: 6 }}>{row.ownerName} · {shortAddress(row.id)}</div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
                       <span>{btc(row.lockedBalanceBtc)}</span>
                       <span>{usd2(row.currentUsd)}</span>
@@ -651,14 +660,11 @@ export default function Page() {
                       5y maturity: {usd(maturityValueUsd)}
                     </div>
                     <div style={{ color: "#93c5fd", marginTop: 8, fontSize: 13, fontWeight: 700 }}>
-                      Click to open wallet menu
+                      Click to open member wallet menu
                     </div>
                   </button>
                 );
               })}
-              <div style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.6 }}>
-                Two wallets are fixed at exactly 1.5 BTC each. Their rewards accrue daily at a simple 5% annual rate and stay locked until maturity.
-              </div>
             </div>
           </div>
 
@@ -669,13 +675,17 @@ export default function Page() {
               <br />
               Addresses: <strong>{ADDRESS_COUNT}</strong>
               <br />
-              Lock period: <strong>{LOCK_YEARS} years</strong>
+              Lock start: <strong>01.04.2026</strong>
+              <br />
+              Lock end: <strong>01.04.2031</strong>
+              <br />
+              Remaining days: <strong>{remainingDays}</strong>
               <br />
               Annual rate: <strong>{pct(APR * 100)}</strong>
               <br />
               Reward model: <strong>paid daily, non-compounding</strong>
               <br />
-              Pinned whales: <strong>2 × 1.5 BTC</strong>
+              Partridge Wealth SMSF members: <strong>Andrew 1.5 BTC · Ksenia 1.5 BTC</strong>
               <br />
               Top 10 hold <strong>{(concentration.top10Share * 100).toFixed(1)}%</strong>
               <br />
@@ -688,7 +698,7 @@ export default function Page() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             <div style={panelTitle}>Top 20 Wallets — Live Allocation Table</div>
             <div style={{ color: "#94a3b8", fontSize: 13 }}>
-              Live USD values move with BTC price. Non-pinned rows pulse visually.
+              Live USD values move with BTC price. Non-member rows pulse visually.
             </div>
           </div>
           <div style={{ overflowX: "auto", marginTop: 14 }}>
@@ -712,14 +722,14 @@ export default function Page() {
                 {top20.map((row, idx) => (
                   <tr key={row.id} style={{ background: idx % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent" }}>
                     <td style={tdStyle}>{idx + 1}</td>
-                    <td style={tdStyle}>{shortAddress(row.id)}</td>
+                    <td style={tdStyle}>{row.isPinned ? `${row.ownerName} · ${shortAddress(row.id)}` : shortAddress(row.id)}</td>
                     <td style={tdStyle}>{btc(row.currentBtc)}</td>
                     <td style={tdStyle}>{usd2(row.currentUsd)}</td>
                     <td style={tdStyle}>{pct(row.sharePct)}</td>
                     <td style={{ ...tdStyle, color: row.isPinned ? "#94a3b8" : row.flow >= 0 ? "#22c55e" : "#ef4444", fontWeight: 700 }}>
                       {row.isPinned ? "0.00%" : `${row.flow >= 0 ? "+" : ""}${pct(row.flow)}`}
                     </td>
-                    <td style={tdStyle}>{row.isPinned ? "Pinned 1.5 BTC" : idx < 10 ? "Whale" : "Standard"}</td>
+                    <td style={tdStyle}>{row.isPinned ? "SMSF Member 1.5 BTC" : idx < 10 ? "Whale" : "Standard"}</td>
                   </tr>
                 ))}
               </tbody>
