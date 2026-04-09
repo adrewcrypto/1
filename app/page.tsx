@@ -408,7 +408,17 @@ function openPrintablePdfReport(member: AddressRow, btcPrice: number, elapsedDay
           `).join("")}
         </tbody>
       </table>
-      <script>window.onload = () => window.print();</script>
+
+      <h3>Risk disclosure</h3>
+      <div class="box">
+        <div>• This is a fixed-term digital asset allocation under a 5-year lock-up.</div>
+        <div>• Early withdrawal is not permitted prior to the contractual end date (01.04.2031).</div>
+        <div>• Interest is calculated at a fixed 5% per annum, credited daily on a non-compounding basis.</div>
+        <div>• Interest is added to the member’s BTC-denominated balance; withdrawals are not permitted during the lock period.</div>
+        <div>• BTC price volatility does not affect BTC-denominated returns; USD valuations are indicative only.</div>
+      </div>
+
+      <script>window.onload
     </body>
   </html>`;
 
