@@ -65,6 +65,10 @@ function usd2(n: number) {
 }
 
 function btc(n: number) {
+  return `${n.toFixed(8)} BTC`;
+}
+
+function btc4(n: number) {
   return `${n.toFixed(4)} BTC`;
 }
 
@@ -82,6 +86,10 @@ function dateFmt(date: Date) {
     month: "short",
     day: "numeric",
   });
+}
+
+function isoDate(date: Date) {
+  return date.toISOString().slice(0, 10);
 }
 
 type AllocationSeed = {
@@ -118,6 +126,24 @@ type ProjectionRow = {
   flatValue: number;
 };
 
+type MemberTx = {
+  date: string;
+  type: string;
+  description: string;
+  btcAmount: number;
+  runningBtc: number;
+};
+
+type FySummary = {
+  fyLabel: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+  openingBtc: number;
+  interestBtc: number;
+  closingBtc: number;
+};
+
 function seededRandom(seed: number) {
   const x = Math.sin(seed) * 10000;
   return x - Math.floor(x);
@@ -146,8 +172,18 @@ function generateAllocations(total: number, count: number): AllocationSeed[] {
   const variableAllocations = weights.map((w) => (w / weightSum) * remaining);
 
   const rows: AllocationSeed[] = [
-    { id: makeHexAddress(1), btc: PINNED_WHALE_BTC, isPinned: true, ownerName: "Andrew" },
-    { id: makeHexAddress(2), btc: PINNED_WHALE_BTC, isPinned: true, ownerName: "Ksenia" },
+    {
+      id: makeHexAddress(1),
+      btc: PINNED_WHALE_BTC,
+      isPinned: true,
+      ownerName: "Andrew",
+    },
+    {
+      id: makeHexAddress(2),
+      btc: PINNED_WHALE_BTC,
+      isPinned: true,
+      ownerName: "Ksenia",
+    },
     ...variableAllocations.map((amt, idx) => ({
       id: makeHexAddress(idx + 3),
       btc: amt,
@@ -157,6 +193,231 @@ function generateAllocations(total: number, count: number): AllocationSeed[] {
   ];
 
   return rows.sort((a, b) => b.btc - a.btc);
+}
+
+function maxDate(a: Date, b: Date) {
+  return a.getTime() > b.getTime() ? a : b;
+}
+
+function minDate(a: Date, b: Date) {
+  return a.getTime() < b.getTime() ? a : b;
+}
+
+function addDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * DAY_MS);
+}
+
+function daysBetween(start: Date, end: Date) {
+  return Math.max(0, Math.floor((end.getTime() - start.getTime()) / DAY_MS));
+}
+
+function getFyEndYear(date: Date) {
+  const month = date.getUTCMonth() + 1;
+  const year = date.getUTCFullYear();
+  return month >= 7 ? year + 1 : year;
+}
+
+function getFyStart(endYear: number) {
+  return new Date(Date.UTC(endYear - 1, 6, 1));
+}
+
+function getFyEnd(endYear: number) {
+  return new Date(Date.UTC(endYear, 5, 30));
+}
+
+function buildFySummaries(principal: number, elapsedDays: number): FySummary[] {
+  const currentDate = addDays(LOCK_START_DATE, elapsedDays);
+  const firstFy = getFyEndYear(LOCK_START_DATE);
+  const lastFy = getFyEndYear(currentDate);
+  const dailyReward = principal * APR / 365;
+
+  const items: FySummary[] = [];
+
+  for (let fy = firstFy; fy <= lastFy; fy++) {
+    const fyStart = getFyStart(fy);
+    const fyEnd = getFyEnd(fy);
+    const activeStart = maxDate(fyStart, LOCK_START_DATE);
+    const activeEndExclusive = minDate(addDays(fyEnd, 1), currentDate);
+    const days = daysBetween(activeStart, activeEndExclusive);
+    const openingDays = daysBetween(LOCK_START_DATE, activeStart);
+    const openingBtc = principal + openingDays * dailyReward;
+    const interestBtc = days * dailyReward;
+    const closingBtc = openingBtc + interestBtc;
+
+    if (days > 0 || fy === firstFy) {
+      items.push({
+        fyLabel: `FY${String(fy).slice(-2)}`,
+        startDate: isoDate(activeStart),
+        endDate: isoDate(addDays(activeEndExclusive, -1)),
+        days,
+        openingBtc,
+        interestBtc,
+        closingBtc,
+      });
+    }
+  }
+
+  return items;
+}
+
+function buildMemberTransactions(principal: number, elapsedDays: number): MemberTx[] {
+  const dailyReward = principal * APR / 365;
+  const runningAtToday = principal + elapsedDays * dailyReward;
+  const checkpoints = Array.from(new Set([
+    1,
+    7,
+    30,
+    90,
+    180,
+    365,
+    730,
+    1095,
+    1460,
+    1826,
+    elapsedDays,
+  ].filter((d) => d > 0 && d <= elapsedDays))).sort((a, b) => a - b);
+
+  const tx: MemberTx[] = [
+    {
+      date: isoDate(LOCK_START_DATE),
+      type: "Commencement",
+      description: "Initial member contribution into BTC Fixed Yield Pool — 5Y Lock",
+      btcAmount: principal,
+      runningBtc: principal,
+    },
+  ];
+
+  checkpoints.forEach((d) => {
+    const reward = d * dailyReward;
+    tx.push({
+      date: isoDate(addDays(LOCK_START_DATE, d)),
+      type: "Interest Allocation",
+      description: `Daily interest credited up to day ${d}`,
+      btcAmount: reward,
+      runningBtc: principal + reward,
+    });
+  });
+
+  if (elapsedDays < TOTAL_LOCK_DAYS) {
+    tx.push({
+      date: isoDate(LOCK_END_DATE),
+      type: "Projected Release",
+      description: "Projected release balance on end of 5-year lock-up",
+      btcAmount: principal + principal * APR * LOCK_YEARS,
+      runningBtc: principal + principal * APR * LOCK_YEARS,
+    });
+  } else {
+    tx.push({
+      date: isoDate(LOCK_END_DATE),
+      type: "Release Available",
+      description: "Lock-up completed. Balance eligible for withdrawal.",
+      btcAmount: runningAtToday,
+      runningBtc: runningAtToday,
+    });
+  }
+
+  return tx;
+}
+
+function openPrintablePdfReport(member: AddressRow, btcPrice: number, elapsedDays: number) {
+  const fy = buildFySummaries(member.baseBtc, elapsedDays);
+  const tx = buildMemberTransactions(member.baseBtc, elapsedDays);
+  const dailyReward = member.baseBtc * APR / 365;
+  const accruedBtc = dailyReward * elapsedDays;
+  const maturityBtc = member.baseBtc + member.baseBtc * APR * LOCK_YEARS;
+  const maturityUsd = maturityBtc * btcPrice;
+
+  const html = `
+  <html>
+    <head>
+      <title>${member.ownerName} - Member Statement PDF Report</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 24px; color: #0f172a; }
+        h1, h2, h3 { margin-bottom: 8px; }
+        .muted { color: #475569; }
+        .box { border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; margin-bottom: 16px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+        th, td { border: 1px solid #cbd5e1; padding: 8px; font-size: 12px; text-align: left; }
+        th { background: #f8fafc; }
+      </style>
+    </head>
+    <body>
+      <h1>Partridge Wealth SMSF</h1>
+      <div class="muted">Member statement and lock-up report</div>
+      <div class="box">
+        <h2>${member.ownerName}</h2>
+        <div>Wallet: ${member.id}</div>
+        <div>Principal: ${member.baseBtc.toFixed(8)} BTC</div>
+        <div>Annual rate: ${(APR * 100).toFixed(2)}% simple, credited daily, non-compounding</div>
+        <div>Lock start: ${dateFmt(LOCK_START_DATE)}</div>
+        <div>Lock end: ${dateFmt(LOCK_END_DATE)}</div>
+        <div>Elapsed days: ${elapsedDays}</div>
+        <div>Accrued reward: ${accruedBtc.toFixed(8)} BTC</div>
+        <div>Current locked balance: ${(member.baseBtc + accruedBtc).toFixed(8)} BTC</div>
+        <div>Projected release amount on 01.04.2031: ${maturityBtc.toFixed(8)} BTC (${usd2(maturityUsd)})</div>
+      </div>
+
+      <h3>Financial year summaries</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>FY</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Days</th>
+            <th>Opening BTC</th>
+            <th>Interest BTC</th>
+            <th>Closing BTC</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${fy.map((r) => `
+            <tr>
+              <td>${r.fyLabel}</td>
+              <td>${r.startDate}</td>
+              <td>${r.endDate}</td>
+              <td>${r.days}</td>
+              <td>${r.openingBtc.toFixed(8)}</td>
+              <td>${r.interestBtc.toFixed(8)}</td>
+              <td>${r.closingBtc.toFixed(8)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+
+      <h3>Transaction history</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Description</th>
+            <th>BTC Amount</th>
+            <th>Running BTC</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tx.map((r) => `
+            <tr>
+              <td>${r.date}</td>
+              <td>${r.type}</td>
+              <td>${r.description}</td>
+              <td>${r.btcAmount.toFixed(8)}</td>
+              <td>${r.runningBtc.toFixed(8)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      <script>window.onload = () => window.print();</script>
+    </body>
+  </html>`;
+
+  const newWindow = window.open("", "_blank");
+  if (newWindow) {
+    newWindow.document.open();
+    newWindow.document.write(html);
+    newWindow.document.close();
+  }
 }
 
 export default function Page() {
@@ -318,6 +579,8 @@ export default function Page() {
     const lockedValueUsd = selectedWalletDetails.lockedBalanceBtc * (btcPrice > 0 ? btcPrice : 68000);
     const maturityBalanceBtc = selectedWalletDetails.baseBtc + selectedWalletDetails.maturityRewardBtc;
     const maturityValueUsd = maturityBalanceBtc * (btcPrice > 0 ? btcPrice : 68000);
+    const txHistory = buildMemberTransactions(selectedWalletDetails.baseBtc, elapsedDays);
+    const fySummary = buildFySummaries(selectedWalletDetails.baseBtc, elapsedDays);
 
     return (
       <div
@@ -330,7 +593,7 @@ export default function Page() {
           fontFamily: "Arial, sans-serif",
         }}
       >
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
           <button
             onClick={() => {
               setSelectedPinnedWallet(null);
@@ -351,30 +614,51 @@ export default function Page() {
           </button>
 
           <div style={panelStyle}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
               <div>
                 <div style={{ color: "#94a3b8", fontSize: 13 }}>Partridge Wealth SMSF — separate member balance</div>
                 <h1 style={{ margin: "8px 0 6px", fontSize: 34 }}>{selectedWalletDetails.ownerName}</h1>
                 <div style={{ color: "#cbd5e1" }}>{shortAddress(selectedWalletDetails.id)} · Locked until {dateFmt(LOCK_END_DATE)}</div>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ color: "#94a3b8", fontSize: 13 }}>Current locked balance</div>
-                <div style={{ fontSize: 30, fontWeight: 800 }}>{btc(selectedWalletDetails.lockedBalanceBtc)}</div>
-                <div style={{ color: "#cbd5e1", marginTop: 6 }}>{usd2(lockedValueUsd)}</div>
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <div style={{
+                  padding: "10px 14px",
+                  borderRadius: 999,
+                  background: "rgba(245,158,11,0.12)",
+                  border: "1px solid rgba(245,158,11,0.35)",
+                  color: "#fde68a",
+                  fontWeight: 800,
+                }}>
+                  LOCKED UNTIL 01.04.2031
+                </div>
+                <button
+                  onClick={() => openPrintablePdfReport(selectedWalletDetails, btcPrice > 0 ? btcPrice : 68000, elapsedDays)}
+                  style={{
+                    background: "rgba(34,197,94,0.16)",
+                    color: "#dcfce7",
+                    border: "1px solid rgba(34,197,94,0.35)",
+                    borderRadius: 14,
+                    padding: "10px 16px",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                  }}
+                >
+                  Generate PDF report
+                </button>
               </div>
             </div>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 16, marginTop: 18 }}>
             {[
-              { label: "Principal", value: btc(selectedWalletDetails.baseBtc), sub: usd2(selectedWalletDetails.baseBtc * btcPrice) },
+              { label: "Principal", value: btc4(selectedWalletDetails.baseBtc), sub: usd2(selectedWalletDetails.baseBtc * btcPrice) },
               { label: "Daily Reward", value: btc(selectedWalletDetails.dailyRewardBtc), sub: "Simple daily payout" },
-              { label: "Accrued Reward", value: btc(selectedWalletDetails.accruedRewardBtc), sub: usd2(selectedWalletDetails.accruedRewardBtc * btcPrice) },
-              { label: "5Y Maturity", value: btc(maturityBalanceBtc), sub: usd2(maturityValueUsd) },
+              { label: "Current Locked Balance", value: btc4(selectedWalletDetails.lockedBalanceBtc), sub: usd2(lockedValueUsd) },
+              { label: "Projected Release 01.04.2031", value: btc4(maturityBalanceBtc), sub: usd2(maturityValueUsd) },
             ].map((card) => (
               <div key={card.label} style={panelStyle}>
                 <div style={{ color: "#94a3b8", fontSize: 13 }}>{card.label}</div>
-                <div style={{ fontSize: 28, fontWeight: 800, marginTop: 8 }}>{card.value}</div>
+                <div style={{ fontSize: 26, fontWeight: 800, marginTop: 8 }}>{card.value}</div>
                 <div style={{ color: "#cbd5e1", fontSize: 13, marginTop: 8 }}>{card.sub}</div>
               </div>
             ))}
@@ -435,9 +719,11 @@ export default function Page() {
             </div>
 
             <div style={panelStyle}>
-              <div style={panelTitle}>Lock status</div>
+              <div style={panelTitle}>Member statement panel</div>
               <div style={{ color: "#d7defd", lineHeight: 1.9 }}>
-                Lock start: <strong>{dateFmt(LOCK_START_DATE)}</strong>
+                Member: <strong>{selectedWalletDetails.ownerName}</strong>
+                <br />
+                Commencement date: <strong>{dateFmt(LOCK_START_DATE)}</strong>
                 <br />
                 Lock end: <strong>{dateFmt(LOCK_END_DATE)}</strong>
                 <br />
@@ -448,6 +734,76 @@ export default function Page() {
                 Rate model: <strong>5% annual, paid daily, non-compounding</strong>
                 <br />
                 Daily credit: <strong>{btc(selectedWalletDetails.dailyRewardBtc)}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 18 }}>
+            <div style={panelStyle}>
+              <div style={panelTitle}>Financial year summaries</div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+                  <thead>
+                    <tr>
+                      {[
+                        "FY",
+                        "Start",
+                        "End",
+                        "Days",
+                        "Opening BTC",
+                        "Interest BTC",
+                        "Closing BTC",
+                      ].map((head) => (
+                        <th key={head} style={thStyle}>{head}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fySummary.map((row) => (
+                      <tr key={row.fyLabel}>
+                        <td style={tdStyle}>{row.fyLabel}</td>
+                        <td style={tdStyle}>{row.startDate}</td>
+                        <td style={tdStyle}>{row.endDate}</td>
+                        <td style={tdStyle}>{row.days}</td>
+                        <td style={tdStyle}>{btc(row.openingBtc)}</td>
+                        <td style={tdStyle}>{btc(row.interestBtc)}</td>
+                        <td style={tdStyle}>{btc(row.closingBtc)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style={panelStyle}>
+              <div style={panelTitle}>Transaction history</div>
+              <div style={{ overflowX: "auto", maxHeight: 420 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+                  <thead>
+                    <tr>
+                      {[
+                        "Date",
+                        "Type",
+                        "Description",
+                        "BTC Amount",
+                        "Running BTC",
+                      ].map((head) => (
+                        <th key={head} style={thStyle}>{head}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {buildMemberTransactions(selectedWalletDetails.baseBtc, elapsedDays).map((row, idx) => (
+                      <tr key={`${row.date}-${idx}`}>
+                        <td style={tdStyle}>{row.date}</td>
+                        <td style={tdStyle}>{row.type}</td>
+                        <td style={tdStyle}>{row.description}</td>
+                        <td style={tdStyle}>{btc(row.btcAmount)}</td>
+                        <td style={tdStyle}>{btc(row.runningBtc)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -501,9 +857,9 @@ export default function Page() {
           {[
             { label: "BTC Price", value: usd2(btcPrice), sub: loading ? "Loading..." : "Live" },
             { label: "Pool Size", value: `${BTC_POOL_TOTAL} BTC`, sub: usd(poolUsd) },
-            { label: "Addresses", value: `${ADDRESS_COUNT}`, sub: `Avg ${btc(avgBtc)}` },
-            { label: "Accrued Rewards", value: btc(accruedRewardBtcTotal), sub: usd(accruedRewardUsdTotal) },
-            { label: "Maturity Value", value: usd(lockedMaturityUsd), sub: `APR ${pct(APR * 100)}` },
+            { label: "Addresses", value: `${ADDRESS_COUNT}`, sub: `Avg ${btc4(avgBtc)}` },
+            { label: "Accrued Rewards", value: btc4(accruedRewardBtcTotal), sub: usd(accruedRewardUsdTotal) },
+            { label: "Projected Release 01.04.2031", value: usd(lockedMaturityUsd), sub: `APR ${pct(APR * 100)}` },
           ].map((card, idx) => (
             <div
               key={card.label}
@@ -653,11 +1009,11 @@ export default function Page() {
                     <div style={{ fontSize: 13, color: "#cbd5e1" }}>Member: {row.ownerName}</div>
                     <div style={{ fontSize: 16, fontWeight: 700, marginTop: 6 }}>{row.ownerName} · {shortAddress(row.id)}</div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
-                      <span>{btc(row.lockedBalanceBtc)}</span>
+                      <span>{btc4(row.lockedBalanceBtc)}</span>
                       <span>{usd2(row.currentUsd)}</span>
                     </div>
                     <div style={{ color: "#cbd5e1", marginTop: 8, fontSize: 13 }}>
-                      5y maturity: {usd(maturityValueUsd)}
+                      Projected release 01.04.2031: {usd(maturityValueUsd)}
                     </div>
                     <div style={{ color: "#93c5fd", marginTop: 8, fontSize: 13, fontWeight: 700 }}>
                       Click to open member wallet menu
@@ -723,7 +1079,7 @@ export default function Page() {
                   <tr key={row.id} style={{ background: idx % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent" }}>
                     <td style={tdStyle}>{idx + 1}</td>
                     <td style={tdStyle}>{row.isPinned ? `${row.ownerName} · ${shortAddress(row.id)}` : shortAddress(row.id)}</td>
-                    <td style={tdStyle}>{btc(row.currentBtc)}</td>
+                    <td style={tdStyle}>{btc4(row.currentBtc)}</td>
                     <td style={tdStyle}>{usd2(row.currentUsd)}</td>
                     <td style={tdStyle}>{pct(row.sharePct)}</td>
                     <td style={{ ...tdStyle, color: row.isPinned ? "#94a3b8" : row.flow >= 0 ? "#22c55e" : "#ef4444", fontWeight: 700 }}>
