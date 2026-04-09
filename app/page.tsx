@@ -19,7 +19,7 @@ import {
   Legend,
 } from "recharts";
 
-const BTC_POOL_TOTAL = 289;
+const BTC_POOL_TOTAL = 460;
 const ADDRESS_COUNT = 500;
 const PINNED_WHALE_BTC = 1.5;
 const PINNED_COUNT = 2;
