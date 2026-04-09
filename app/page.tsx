@@ -47,6 +47,7 @@ const LOCK_END_DATE = new Date("2031-04-01T00:00:00Z");
 const TOTAL_LOCK_DAYS = Math.round(
   (LOCK_END_DATE.getTime() - LOCK_START_DATE.getTime()) / DAY_MS
 );
+const GENERIC_FIRST_PASSWORD = "000";
 
 function usd(n: number) {
   return new Intl.NumberFormat("en-US", {
@@ -142,6 +143,16 @@ type FySummary = {
   openingBtc: number;
   interestBtc: number;
   closingBtc: number;
+};
+
+type MemberAuth = {
+  username: string;
+  password: string;
+};
+
+type SelectedWalletState = {
+  wallet: AddressRow;
+  authenticated: boolean;
 };
 
 function seededRandom(seed: number) {
@@ -263,19 +274,13 @@ function buildFySummaries(principal: number, elapsedDays: number): FySummary[] {
 function buildMemberTransactions(principal: number, elapsedDays: number): MemberTx[] {
   const dailyReward = principal * APR / 365;
   const runningAtToday = principal + elapsedDays * dailyReward;
-  const checkpoints = Array.from(new Set([
-    1,
-    7,
-    30,
-    90,
-    180,
-    365,
-    730,
-    1095,
-    1460,
-    1826,
-    elapsedDays,
-  ].filter((d) => d > 0 && d <= elapsedDays))).sort((a, b) => a - b);
+  const checkpoints = Array.from(
+    new Set(
+      [1, 7, 30, 90, 180, 365, 730, 1095, 1460, 1826, elapsedDays].filter(
+        (d) => d > 0 && d <= elapsedDays
+      )
+    )
+  ).sort((a, b) => a - b);
 
   const tx: MemberTx[] = [
     {
@@ -319,7 +324,11 @@ function buildMemberTransactions(principal: number, elapsedDays: number): Member
   return tx;
 }
 
-function openPrintablePdfReport(member: AddressRow, btcPrice: number, elapsedDays: number) {
+function openPrintablePdfReport(
+  member: AddressRow,
+  btcPrice: number,
+  elapsedDays: number
+) {
   const fy = buildFySummaries(member.baseBtc, elapsedDays);
   const tx = buildMemberTransactions(member.baseBtc, elapsedDays);
   const dailyReward = member.baseBtc * APR / 365;
@@ -371,7 +380,9 @@ function openPrintablePdfReport(member: AddressRow, btcPrice: number, elapsedDay
           </tr>
         </thead>
         <tbody>
-          ${fy.map((r) => `
+          ${fy
+            .map(
+              (r) => `
             <tr>
               <td>${r.fyLabel}</td>
               <td>${r.startDate}</td>
@@ -381,7 +392,9 @@ function openPrintablePdfReport(member: AddressRow, btcPrice: number, elapsedDay
               <td>${r.interestBtc.toFixed(8)}</td>
               <td>${r.closingBtc.toFixed(8)}</td>
             </tr>
-          `).join("")}
+          `
+            )
+            .join("")}
         </tbody>
       </table>
 
@@ -397,7 +410,9 @@ function openPrintablePdfReport(member: AddressRow, btcPrice: number, elapsedDay
           </tr>
         </thead>
         <tbody>
-          ${tx.map((r) => `
+          ${tx
+            .map(
+              (r) => `
             <tr>
               <td>${r.date}</td>
               <td>${r.type}</td>
@@ -405,7 +420,9 @@ function openPrintablePdfReport(member: AddressRow, btcPrice: number, elapsedDay
               <td>${r.btcAmount.toFixed(8)}</td>
               <td>${r.runningBtc.toFixed(8)}</td>
             </tr>
-          `).join("")}
+          `
+            )
+            .join("")}
         </tbody>
       </table>
 
@@ -418,7 +435,7 @@ function openPrintablePdfReport(member: AddressRow, btcPrice: number, elapsedDay
         <div>• BTC price volatility does not affect BTC-denominated returns; USD valuations are indicative only.</div>
       </div>
 
-      <script>window.onload
+      <script>window.onload = () => window.print();</script>
     </body>
   </html>`;
 
@@ -438,8 +455,20 @@ export default function Page() {
   const [pulse, setPulse] = useState(0);
   const [allocations] = useState(() => generateAllocations(BTC_POOL_TOTAL, ADDRESS_COUNT));
   const [history, setHistory] = useState<HistoryRow[]>([]);
-  const [selectedPinnedWallet, setSelectedPinnedWallet] = useState<AddressRow | null>(null);
+  const [selectedPinnedWallet, setSelectedPinnedWallet] = useState<SelectedWalletState | null>(null);
   const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [settingsCurrentPassword, setSettingsCurrentPassword] = useState("");
+  const [settingsNewPassword, setSettingsNewPassword] = useState("");
+  const [settingsConfirmPassword, setSettingsConfirmPassword] = useState("");
+  const [settingsMessage, setSettingsMessage] = useState("");
+  const [authStore, setAuthStore] = useState<Record<string, MemberAuth>>({
+    Andrew: { username: "Andrew", password: GENERIC_FIRST_PASSWORD },
+    Ksenia: { username: "Ksenia", password: GENERIC_FIRST_PASSWORD },
+  });
 
   useEffect(() => {
     let lastGoodPrice = 68000;
@@ -582,10 +611,142 @@ export default function Page() {
   }, [pulse, btcPrice, poolUsd]);
 
   const selectedWalletDetails = selectedPinnedWallet
-    ? liveRows.find((row) => row.id === selectedPinnedWallet.id) || selectedPinnedWallet
+    ? liveRows.find((row) => row.id === selectedPinnedWallet.wallet.id) || selectedPinnedWallet.wallet
     : null;
 
-  if (selectedWalletDetails) {
+  function openLogin(wallet: AddressRow) {
+    setSelectedPinnedWallet({ wallet, authenticated: false });
+    setLoginUsername(wallet.ownerName);
+    setLoginPassword("");
+    setLoginError("");
+    setShowSettings(false);
+    setSettingsMessage("");
+  }
+
+  function handleLogin() {
+    if (!selectedPinnedWallet) return;
+    const owner = selectedPinnedWallet.wallet.ownerName;
+    const record = authStore[owner];
+
+    if (
+      loginUsername.trim() === record?.username &&
+      loginPassword === record?.password
+    ) {
+      setSelectedPinnedWallet({ wallet: selectedPinnedWallet.wallet, authenticated: true });
+      setLoginError("");
+      setShowSettings(false);
+    } else {
+      setLoginError("Invalid username or password.");
+    }
+  }
+
+  function handleChangePassword() {
+    if (!selectedWalletDetails) return;
+    const owner = selectedWalletDetails.ownerName;
+    const record = authStore[owner];
+
+    if (settingsCurrentPassword !== record.password) {
+      setSettingsMessage("Current password is incorrect.");
+      return;
+    }
+    if (!settingsNewPassword || settingsNewPassword.length < 3) {
+      setSettingsMessage("New password must be at least 3 characters.");
+      return;
+    }
+    if (settingsNewPassword !== settingsConfirmPassword) {
+      setSettingsMessage("New password and confirmation do not match.");
+      return;
+    }
+
+    setAuthStore((prev) => ({
+      ...prev,
+      [owner]: {
+        ...prev[owner],
+        password: settingsNewPassword,
+      },
+    }));
+    setSettingsCurrentPassword("");
+    setSettingsNewPassword("");
+    setSettingsConfirmPassword("");
+    setSettingsMessage("Password updated successfully.");
+  }
+
+  if (selectedPinnedWallet && !selectedPinnedWallet.authenticated) {
+    const wallet = selectedPinnedWallet.wallet;
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background:
+            "radial-gradient(circle at top left, #1e293b 0%, #0f172a 35%, #020617 100%)",
+          color: "#e2e8f0",
+          padding: 24,
+          fontFamily: "Arial, sans-serif",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{ width: "100%", maxWidth: 480, ...panelStyle }}>
+          <button
+            onClick={() => setSelectedPinnedWallet(null)}
+            style={{
+              marginBottom: 18,
+              background: "rgba(59,130,246,0.16)",
+              color: "#dbeafe",
+              border: "1px solid rgba(59,130,246,0.32)",
+              borderRadius: 14,
+              padding: "10px 16px",
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            ← Back
+          </button>
+
+          <div style={{ color: "#94a3b8", fontSize: 13 }}>Member login</div>
+          <h1 style={{ margin: "8px 0 6px", fontSize: 32 }}>{wallet.ownerName}</h1>
+          <div style={{ color: "#cbd5e1", marginBottom: 18 }}>
+            First login uses username <strong>{wallet.ownerName}</strong> and generic password <strong>{GENERIC_FIRST_PASSWORD}</strong>.
+          </div>
+
+          <label style={labelStyle}>Username</label>
+          <input
+            value={loginUsername}
+            onChange={(e) => setLoginUsername(e.target.value)}
+            style={inputStyle}
+          />
+
+          <label style={labelStyle}>Password</label>
+          <input
+            type="password"
+            value={loginPassword}
+            onChange={(e) => setLoginPassword(e.target.value)}
+            style={inputStyle}
+          />
+
+          {loginError && (
+            <div style={{
+              marginBottom: 12,
+              background: "rgba(239,68,68,0.12)",
+              border: "1px solid rgba(239,68,68,0.35)",
+              color: "#fecaca",
+              padding: 12,
+              borderRadius: 14,
+            }}>
+              {loginError}
+            </div>
+          )}
+
+          <button onClick={handleLogin} style={primaryButtonStyle}>
+            Log in
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (selectedWalletDetails && selectedPinnedWallet?.authenticated) {
     const lockedValueUsd = selectedWalletDetails.lockedBalanceBtc * (btcPrice > 0 ? btcPrice : 68000);
     const maturityBalanceBtc = selectedWalletDetails.baseBtc + selectedWalletDetails.maturityRewardBtc;
     const maturityValueUsd = maturityBalanceBtc * (btcPrice > 0 ? btcPrice : 68000);
@@ -608,6 +769,8 @@ export default function Page() {
             onClick={() => {
               setSelectedPinnedWallet(null);
               setWithdrawAmount("");
+              setShowSettings(false);
+              setSettingsMessage("");
             }}
             style={{
               marginBottom: 18,
@@ -627,7 +790,26 @@ export default function Page() {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
               <div>
                 <div style={{ color: "#94a3b8", fontSize: 13 }}>Partridge Wealth SMSF — separate member balance</div>
-                <h1 style={{ margin: "8px 0 6px", fontSize: 34 }}>{selectedWalletDetails.ownerName}</h1>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <h1 style={{ margin: "8px 0 6px", fontSize: 34 }}>{selectedWalletDetails.ownerName}</h1>
+                  <button
+                    onClick={() => {
+                      setShowSettings((v) => !v);
+                      setSettingsMessage("");
+                    }}
+                    style={{
+                      background: "rgba(148,163,184,0.12)",
+                      color: "#e2e8f0",
+                      border: "1px solid rgba(148,163,184,0.22)",
+                      borderRadius: 12,
+                      padding: "8px 12px",
+                      cursor: "pointer",
+                      fontWeight: 700,
+                    }}
+                  >
+                    ⚙ Settings
+                  </button>
+                </div>
                 <div style={{ color: "#cbd5e1" }}>{shortAddress(selectedWalletDetails.id)} · Locked until {dateFmt(LOCK_END_DATE)}</div>
               </div>
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
@@ -657,6 +839,30 @@ export default function Page() {
                 </button>
               </div>
             </div>
+
+            {showSettings && (
+              <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid rgba(148,163,184,0.16)" }}>
+                <div style={panelTitle}>Security settings</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+                  <div>
+                    <label style={labelStyle}>Current password</label>
+                    <input type="password" value={settingsCurrentPassword} onChange={(e) => setSettingsCurrentPassword(e.target.value)} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>New password</label>
+                    <input type="password" value={settingsNewPassword} onChange={(e) => setSettingsNewPassword(e.target.value)} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Confirm new password</label>
+                    <input type="password" value={settingsConfirmPassword} onChange={(e) => setSettingsConfirmPassword(e.target.value)} style={inputStyle} />
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
+                  <button onClick={handleChangePassword} style={primaryButtonStyle}>Update password</button>
+                  {settingsMessage && <div style={{ color: settingsMessage.includes("success") ? "#86efac" : "#fca5a5" }}>{settingsMessage}</div>}
+                </div>
+              </div>
+            )}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 16, marginTop: 18 }}>
@@ -803,7 +1009,7 @@ export default function Page() {
                     </tr>
                   </thead>
                   <tbody>
-                    {buildMemberTransactions(selectedWalletDetails.baseBtc, elapsedDays).map((row, idx) => (
+                    {txHistory.map((row, idx) => (
                       <tr key={`${row.date}-${idx}`}>
                         <td style={tdStyle}>{row.date}</td>
                         <td style={tdStyle}>{row.type}</td>
@@ -1005,7 +1211,7 @@ export default function Page() {
                 return (
                   <button
                     key={row.id}
-                    onClick={() => setSelectedPinnedWallet(row)}
+                    onClick={() => openLogin(row)}
                     style={{
                       textAlign: "left",
                       borderRadius: 20,
@@ -1026,7 +1232,7 @@ export default function Page() {
                       Projected release 01.04.2031: {usd(maturityValueUsd)}
                     </div>
                     <div style={{ color: "#93c5fd", marginTop: 8, fontSize: 13, fontWeight: 700 }}>
-                      Click to open member wallet menu
+                      Click to log in to member wallet
                     </div>
                   </button>
                 );
@@ -1133,4 +1339,32 @@ const tdStyle: React.CSSProperties = {
   padding: 12,
   fontSize: 14,
   borderBottom: "1px solid rgba(148,163,184,0.08)",
+};
+
+const labelStyle: React.CSSProperties = {
+  display: "block",
+  color: "#94a3b8",
+  fontSize: 13,
+  marginBottom: 8,
+};
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "14px 16px",
+  borderRadius: 14,
+  border: "1px solid rgba(148,163,184,0.16)",
+  background: "rgba(15,23,42,0.65)",
+  color: "#e2e8f0",
+  marginBottom: 14,
+  outline: "none",
+};
+
+const primaryButtonStyle: React.CSSProperties = {
+  background: "rgba(34,197,94,0.18)",
+  color: "#dcfce7",
+  border: "1px solid rgba(34,197,94,0.35)",
+  borderRadius: 14,
+  padding: "12px 16px",
+  cursor: "pointer",
+  fontWeight: 700,
 };
